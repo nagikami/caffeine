@@ -196,7 +196,8 @@ public final class Caffeine<K extends Object, V extends Object> {
     }
   }
 
-  /** Ensures that the state expression is true. */
+  /** Ensures that the state expression is true.
+   * 表达式必须为true*/
   @FormatMethod
   static void requireState(boolean expression, String template, @Nullable Object... args) {
     if (!expression) {
@@ -204,7 +205,8 @@ public final class Caffeine<K extends Object, V extends Object> {
     }
   }
 
-  /** Returns the smallest power of two greater than or equal to {@code x}. */
+  /** Returns the smallest power of two greater than or equal to {@code x}.
+   * 获取大于等于x的最小的2的幂次方 */
   static int ceilingPowerOfTwo(int x) {
     // From Hacker's Delight, Chapter 3, Harry S. Warren Jr.
     return 1 << -Integer.numberOfLeadingZeros(x - 1);
@@ -1013,6 +1015,7 @@ public final class Caffeine<K extends Object, V extends Object> {
    * Builds a cache which does not automatically load values when keys are requested unless a
    * mapping function is provided. Note that multiple threads can concurrently load values for
    * distinct keys.
+   * 创建非自动加载的cache（不指定loader），可以使用多线程加载不同的key
    * <p>
    * Consider {@link #build(CacheLoader)} instead, if it is feasible to implement a
    * {@code CacheLoader}.
@@ -1032,7 +1035,9 @@ public final class Caffeine<K extends Object, V extends Object> {
     @SuppressWarnings("unchecked")
     Caffeine<K1, V1> self = (Caffeine<K1, V1>) this;
     return isBounded()
+            // 受限本地缓存
         ? new BoundedLocalCache.BoundedLocalManualCache<>(self)
+            // 不受限本地缓存
         : new UnboundedLocalCache.UnboundedLocalManualCache<>(self);
   }
 
@@ -1157,11 +1162,13 @@ public final class Caffeine<K extends Object, V extends Object> {
   }
 
   void requireNonLoadingCache() {
+    // 保证refreshAfterWriteNanos未初始化
     requireState(refreshAfterWriteNanos == UNSET_INT, "refreshAfterWrite requires a LoadingCache");
   }
 
   void requireWeightWithWeigher() {
     if (weigher == null) {
+      // 保证maximumWeight未初始化
       requireState(maximumWeight == UNSET_INT, "maximumWeight requires weigher");
     } else if (strictParsing) {
       requireState(maximumWeight != UNSET_INT, "weigher requires maximumWeight");

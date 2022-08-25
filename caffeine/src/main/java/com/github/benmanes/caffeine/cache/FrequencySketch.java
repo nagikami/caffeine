@@ -23,6 +23,8 @@ import org.checkerframework.checker.index.qual.NonNegative;
  * A probabilistic multiset for estimating the popularity of an element within a time window. The
  * maximum frequency of an element is limited to 15 (4-bits) and an aging process periodically
  * halves the popularity of all elements.
+ * 统计一个元素在一个时间窗口的访问频次（最大为15），一个老化进程会定期将所有元素的访问频次减半，
+ * 过滤掉长期不使用的元素
  *
  * @author ben.manes@gmail.com (Ben Manes)
  */
@@ -58,6 +60,7 @@ final class FrequencySketch<E> {
 
   int sampleSize;
   int tableMask;
+  // 每个long保存16个计数器，每个计数器占4位（4 * 16 = 64）
   long[] table;
   int size;
 
@@ -101,7 +104,7 @@ final class FrequencySketch<E> {
 
   /**
    * Returns the estimated number of occurrences of an element, up to the maximum (15).
-   *
+   * 获取元素e在时间窗口内的访问频次
    * @param e the element to count occurrences of
    * @return the estimated number of occurrences of the element; possibly zero but never negative
    */
@@ -112,13 +115,20 @@ final class FrequencySketch<E> {
     }
 
     int hash = spread(e.hashCode());
+    // 获取计数器组的起始计数器索引（0 4 8 12），计数器组的计数器索引连续，但是table索引不同，
+    // 例如table[1]:4,table[5]:5,table[7]:6,table[3]:7
     int start = (hash & 3) << 2;
     int frequency = Integer.MAX_VALUE;
     for (int i = 0; i < 4; i++) {
+      // 根据当前hash种子获取table索引
       int index = indexOf(hash, i);
+      // 获取计数器的值
       int count = (int) ((table[index] >>> ((start + i) << 2)) & 0xfL);
+      // 获取计数器组中最小的一个计数器的值，如此，只有4个hash对应的计数器都发生了hash碰撞，
+      // 才会导致获取到的频次比真实的多
       frequency = Math.min(frequency, count);
     }
+    // 返回最小的频率
     return frequency;
   }
 
@@ -126,7 +136,7 @@ final class FrequencySketch<E> {
    * Increments the popularity of the element if it does not exceed the maximum (15). The popularity
    * of all elements will be periodically down sampled when the observed events exceed a threshold.
    * This process provides a frequency aging to allow expired long term entries to fade away.
-   *
+   * 当事件数量达到阈值时，所有元素的频率减半，以此过滤掉长期不使用的元素
    * @param e the element to add
    */
   public void increment(E e) {
@@ -135,9 +145,11 @@ final class FrequencySketch<E> {
     }
 
     int hash = spread(e.hashCode());
+    // 计数器组的起始计数器索引（0 4 8 12）
     int start = (hash & 3) << 2;
 
     // Loop unrolling improves throughput by 5m ops/s
+    // 使用不同的hash种子，获取对应的table索引
     int index0 = indexOf(hash, 0);
     int index1 = indexOf(hash, 1);
     int index2 = indexOf(hash, 2);
@@ -148,7 +160,9 @@ final class FrequencySketch<E> {
     added |= incrementAt(index2, start + 2);
     added |= incrementAt(index3, start + 3);
 
+    // 任意一个计数器自增成功，且频次自增次数大于阈值
     if (added && (++size == sampleSize)) {
+      // 每个元素的频次减半
       reset();
     }
   }
@@ -161,20 +175,26 @@ final class FrequencySketch<E> {
    * @return if incremented
    */
   boolean incrementAt(int i, int j) {
+    // 获取对应计数器的起始bit位置
     int offset = j << 2;
+    // 获取计数器对应4个bit的mask（1111）
     long mask = (0xfL << offset);
+    // 计数器的值不为1111
     if ((table[i] & mask) != mask) {
+      // 计数器自增
       table[i] += (1L << offset);
       return true;
     }
     return false;
   }
 
-  /** Reduces every counter by half of its original value. */
+  /** Reduces every counter by half of its original value.
+   * 每个元素的频次减半*/
   void reset() {
     int count = 0;
     for (int i = 0; i < table.length; i++) {
       count += Long.bitCount(table[i] & ONE_MASK);
+      // 频次减半
       table[i] = (table[i] >>> 1) & RESET_MASK;
     }
     size = (size - (count >>> 2)) >>> 1;
@@ -188,14 +208,17 @@ final class FrequencySketch<E> {
    * @return the table index
    */
   int indexOf(int item, int i) {
+    // 根据不同的hash种子重新计算hash
     long hash = (item + SEED[i]) * SEED[i];
     hash += (hash >>> 32);
+    // 返回hash对应的table索引
     return ((int) hash) & tableMask;
   }
 
   /**
    * Applies a supplemental hash function to a given hashCode, which defends against poor quality
    * hash functions.
+   * 两次hash，避免低质量hash
    */
   int spread(int x) {
     x = ((x >>> 16) ^ x) * 0x45d9f3b;

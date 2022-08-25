@@ -681,6 +681,7 @@ abstract class BoundedLocalCache<K, V> extends BLCHeader.DrainStatusRef
   @GuardedBy("evictionLock")
   int evictFromWindow() {
     int candidates = 0;
+    // 获取窗口缓存最近被访问的元素（MRU）
     Node<K, V> node = accessOrderWindowDeque().peek();
     while (windowWeightedSize() > windowMaximum()) {
       // The pending operations will adjust the size to reflect the correct weight
@@ -690,13 +691,18 @@ abstract class BoundedLocalCache<K, V> extends BLCHeader.DrainStatusRef
 
       Node<K, V> next = node.getNextInAccessOrder();
       if (node.getPolicyWeight() != 0) {
+        // 更新元素所属缓存为主缓存的PROBATION区
         node.makeMainProbation();
+        // 从窗口缓存移除元素
         accessOrderWindowDeque().remove(node);
+        // 添加元素到PROBATION区
         accessOrderProbationDeque().add(node);
         candidates++;
 
+        // 更新窗口缓存总权重
         setWindowWeightedSize(windowWeightedSize() - node.getPolicyWeight());
       }
+      // 迭代到下一个
       node = next;
     }
 
@@ -708,6 +714,8 @@ abstract class BoundedLocalCache<K, V> extends BLCHeader.DrainStatusRef
    * determines whether admitting an entry (coming from the window space) is preferable to retaining
    * the eviction policy's victim. This decision is made using a frequency filter so that the
    * least frequently used entry is removed.
+   * 当主缓存容量已满时，根据admit()选择淘汰主缓存受害者（主缓存通过LFU决定的淘汰者）
+   * 还是拒绝并丢弃候选者（窗口缓存通过MRU（淘汰最近被访问最多的元素）淘汰，想要加入主缓存的元素）
    *
    * The window space's candidates were previously placed in the MRU position and the eviction
    * policy's victim is at the LRU position. The two ends of the queue are evaluated while an
@@ -719,7 +727,9 @@ abstract class BoundedLocalCache<K, V> extends BLCHeader.DrainStatusRef
   @GuardedBy("evictionLock")
   void evictFromMain(int candidates) {
     int victimQueue = PROBATION;
+    // 获取受害者（LRU）
     Node<K, V> victim = accessOrderProbationDeque().peekFirst();
+    // 获取最近一个候选者（MRU）
     Node<K, V> candidate = accessOrderProbationDeque().peekLast();
     while (weightedSize() > maximum()) {
       // Search the admission window for additional candidates
@@ -822,6 +832,8 @@ abstract class BoundedLocalCache<K, V> extends BLCHeader.DrainStatusRef
    * frequency relative to the victim. A small amount of randomness is used to protect against hash
    * collision attacks, where the victim's frequency is artificially raised so that no new entries
    * are admitted.
+   * 通过候选人频率和受害者比较，决定候选人是否可以进入主缓存，通过随机性保证在遇到hash冲突攻击时，
+   * 不会因为受害者频率异常升高导致没有候选人可以进入主缓存
    *
    * @param candidateKey the key for the entry being proposed for long term retention
    * @param victimKey the key for the entry chosen by the eviction policy for replacement
@@ -829,16 +841,21 @@ abstract class BoundedLocalCache<K, V> extends BLCHeader.DrainStatusRef
    */
   @GuardedBy("evictionLock")
   boolean admit(K candidateKey, K victimKey) {
+    // 获取受害者频率
     int victimFreq = frequencySketch().frequency(victimKey);
+    // 获取候选人频率
     int candidateFreq = frequencySketch().frequency(candidateKey);
+    // 候选人频率大于受害者频率，返回true，允许候选人加入主缓存，淘汰受害者
     if (candidateFreq > victimFreq) {
       return true;
     } else if (candidateFreq <= 5) {
       // The maximum frequency is 15 and halved to 7 after a reset to age the history. An attack
       // exploits that a hot candidate is rejected in favor of a hot victim. The threshold of a warm
       // candidate reduces the number of random acceptances to minimize the impact on the hit rate.
+      // 通过对热候选者的频率设置阈值，减少随机加入主缓存的数量，减少对命中率的影响
       return false;
     }
+    // 候选人频率小于等于受害者，且大于5，随机决定是否加入主缓存（概率极低）
     int random = ThreadLocalRandom.current().nextInt();
     return ((random & 127) == 0);
   }
@@ -1681,7 +1698,8 @@ abstract class BoundedLocalCache<K, V> extends BLCHeader.DrainStatusRef
     }
   }
 
-  /** Updates the node's location in the page replacement policy. */
+  /** Updates the node's location in the page replacement policy.
+   * 更新元素在访问队列中的位置，用于缓存淘汰算法*/
   @GuardedBy("evictionLock")
   void onAccess(Node<K, V> node) {
     if (evicts()) {
@@ -1730,6 +1748,7 @@ abstract class BoundedLocalCache<K, V> extends BLCHeader.DrainStatusRef
     // An entry may be scheduled for reordering despite having been removed. This can occur when the
     // entry was concurrently read while a writer was removing it. If the entry is no longer linked
     // then it does not need to be processed.
+    // 将最近访问的元素放到队尾
     if (deque.contains(node)) {
       deque.moveToBack(node);
     }
@@ -1891,6 +1910,7 @@ abstract class BoundedLocalCache<K, V> extends BLCHeader.DrainStatusRef
         node.setPolicyWeight(oldWeightedSize + weightDifference);
         if (node.inWindow()) {
           if (node.getPolicyWeight() <= windowMaximum()) {
+            // 更新元素访问队列中的顺序
             onAccess(node);
           } else if (accessOrderWindowDeque().contains(node)) {
             accessOrderWindowDeque().moveToFront(node);
@@ -2289,6 +2309,7 @@ abstract class BoundedLocalCache<K, V> extends BLCHeader.DrainStatusRef
 
       int weightedDifference = mayUpdate ? (newWeight - oldWeight) : 0;
       if ((oldValue == null) || (weightedDifference != 0) || expired) {
+        // 更新访问队列
         afterWrite(new UpdateTask(prior, weightedDifference));
       } else if (!onlyIfAbsent && exceedsTolerance) {
         afterWrite(new UpdateTask(prior, weightedDifference));
